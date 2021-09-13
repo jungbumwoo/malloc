@@ -76,8 +76,11 @@ team_t team = {
 
 // void *mem_sbrk(int incr);
 
-/* */
+/* static variable*/
 static void *heap_listp;
+
+/*for next fit */
+static void *last_listp;
 
 /* functions */
 int mm_init(void);
@@ -87,6 +90,7 @@ void *mm_realloc(void *ptr, size_t size);
 static void *extend_heap(size_t words);
 static void *coalesce(void *bp);
 static void *find_fit(size_t asize);
+static void *next_fit(size_t asize);
 static void place(void *bp, size_t asize);
 /* 
  * mm_init - initialize the malloc package.
@@ -100,10 +104,11 @@ int mm_init(void)
     PUT(heap_listp + (1 * WSIZE), PACK(DSIZE, 1)); /* Prologue header*/
     PUT(heap_listp + (2 * WSIZE), PACK(DSIZE, 1)); /* Prologue footer*/
     PUT(heap_listp + (3 * WSIZE), PACK(0, 1));     /* Epilogue header */
-    heap_listp += (2 * WSIZE);
+    heap_listp += (2 * WSIZE);                     /* 여기 2 인 이유는? */
+    last_listp = heap_listp;
 
     /* Extend the empty heap with a free block of CHUNKSIZE bytes */
-    if (extend_heap(CHUNKSIZE / WSIZE) == NULL)
+    if (extend_heap(CHUNKSIZE / WSIZE) == NULL) /* CHUNKSIZE는 뭐람? */
         return -1;
 
     return 0;
@@ -130,9 +135,11 @@ void *mm_malloc(size_t size)
         asize = DSIZE * ((size + (DSIZE) + (DSIZE - 1)) / DSIZE);
 
     /* Search the free list for a fit */
-    if ((bp = find_fit(asize)) != NULL)
+    // if ((bp = find_fit(asize)) != NULL)
+    if ((bp = next_fit(asize)) != NULL)
     {
         place(bp, asize);
+        last_listp = bp;
         return bp;
     }
 
@@ -140,6 +147,7 @@ void *mm_malloc(size_t size)
     extendsize = MAX(asize, CHUNKSIZE);
     if ((bp = extend_heap(extendsize / WSIZE)) == NULL)
         return NULL;
+    last_listp = bp;
     place(bp, asize);
     return bp;
 }
@@ -231,6 +239,7 @@ static void *coalesce(void *bp)
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
         bp = PREV_BLKP(bp);
     }
+    last_listp = bp;
     return bp;
 }
 
@@ -239,6 +248,27 @@ static void *find_fit(size_t asize)
     /* First-fit search */
     void *bp;
     for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
+    {
+        if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp))))
+        {
+            return bp;
+        }
+    }
+    return NULL; /* No fit */
+}
+
+static void *next_fit(size_t asize)
+{
+    void *bp;
+    for (bp = last_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
+    {
+        if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp))))
+        {
+            return bp;
+        }
+    }
+
+    for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0 && last_listp > bp; bp = NEXT_BLKP(bp))
     {
         if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp))))
         {
