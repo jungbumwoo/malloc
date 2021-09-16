@@ -7,15 +7,16 @@
 /*********************************************************
  * NOTE TO STUDENTS: Before you do anything else, please
  * provide your team information in the following struct.
- * explicit. 수정 by 서정적 박서정 
+ * https://github.com/seanlion/malloc_lab_implementation/blob/main/mm_explicit.c
+ * mm_explicit2
  ********************************************************/
 
 team_t team = {
     "Malloc lab",
-    "Seung    ",
+    "Jerry    ",
     "20210120",
-    "Huh ",
-    "20210120"};
+    "Woo ",
+    "20210906"};
 
 //* Basic constants and macros: */
 #define WSIZE 4             /* Word and header/footer size (bytes) */
@@ -37,20 +38,20 @@ team_t team = {
 #define GET_ALLOC(p) (GET(p) & 0x1)
 
 /* Given block ptr bp, compute address of its header and footer */
-#define HDRP(bp) ((void *)(bp)-WSIZE)                        //header pointer가 가리키는 위치
-#define FTRP(bp) ((void *)(bp) + GET_SIZE(HDRP(bp)) - DSIZE) //footer pointer가 가리키는 위치
+#define HDRP(bp) ((void *)(bp)-WSIZE)
+#define FTRP(bp) ((void *)(bp) + GET_SIZE(HDRP(bp)) - DSIZE)
 
 /* Given block ptr bp, compute address of next and previous blocks */
 #define NEXT_BLK(bp) ((void *)(bp) + GET_SIZE(HDRP(bp)))
 #define PREV_BLK(bp) ((void *)(bp)-GET_SIZE((void *)(bp)-DSIZE))
 
 /* Given ptr in free list, get next and previous ptr in the list */
-#define GET_NEXT_PTR(bp) (*(char **)(bp + WSIZE)) // 이중포인터 (char **)인 bp가 가리키는 주소에 접근하여 bp + WSIZE에 위치한 값 읽어오기
-#define GET_PREV_PTR(bp) (*(char **)(bp))         // 이중포인터 (char **)인 bp가 가리키는 주소에 접근하여 값 읽어오기
+#define GET_NEXT_PTR(bp) (*(char **)(bp + WSIZE))
+#define GET_PREV_PTR(bp) (*(char **)(bp))
 
 /* Puts pointers in the next and previous elements of free list */
-#define SET_NEXT_PTR(bp, qp) (GET_NEXT_PTR(bp) = qp) //이중포인터 (char **)인 bp가 가리키는 주소에 접근하여 bp + WSIZE 위치에 qp값 넣기
-#define SET_PREV_PTR(bp, qp) (GET_PREV_PTR(bp) = qp) //이중포인터 (char **)인 bp가 가리키는 주소에 접근하여 bp 위치에 qp값 넣기
+#define SET_NEXT_PTR(bp, qp) (GET_NEXT_PTR(bp) = qp)
+#define SET_PREV_PTR(bp, qp) (GET_PREV_PTR(bp) = qp)
 
 /* 글로벌 변수 */
 static char *heap_listp = 0;
@@ -66,19 +67,21 @@ static void place(void *bp, size_t asize);
 static void insert_in_free_list(void *bp);
 static void remove_from_free_list(void *bp);
 
+/* heap consistency checker routines: 이건 직접 로직을 구현하진 않고 참고 코드 그대로. */
+static void checkblock(void *bp);
+static void checkheap(bool verbose);
+static void printblock(void *bp);
+
 int mm_init(void)
 {
     /* Create the initial empty heap. */
-    if ((heap_listp = mem_sbrk(6 * WSIZE)) == NULL)
+    if ((heap_listp = mem_sbrk(8 * WSIZE)) == NULL) // 8 * WSIZE에 큰 이유는 없음.
         return -1;
 
-    PUT(heap_listp, 0);                                /* padding */
-    PUT(heap_listp + (1 * WSIZE), PACK(2 * DSIZE, 1)); /* Prologue header */
-    PUT(heap_listp + (2 * WSIZE), 0);
-    PUT(heap_listp + (3 * WSIZE), 0);
-
-    PUT(heap_listp + (4 * WSIZE), PACK(2 * DSIZE, 1)); /* Prologue footer */
-    PUT(heap_listp + (5 * WSIZE), PACK(0, 1));         /* Epilogue header */
+    PUT(heap_listp, 0);                            /* padding 만듬 */
+    PUT(heap_listp + (1 * WSIZE), PACK(DSIZE, 1)); /* Prologue header */
+    PUT(heap_listp + (2 * WSIZE), PACK(DSIZE, 1)); /* Prologue footer */
+    PUT(heap_listp + (3 * WSIZE), PACK(0, 1));     /* Epilogue header */
     free_list_start = heap_listp + 2 * WSIZE;
     /* Extend the empty heap with a free block of minimum possible block size */
     if (extend_heap(4) == NULL)
@@ -115,9 +118,11 @@ static void *extend_heap(size_t words)
 
 static void *coalesce(void *bp)
 {
+
     //if previous block is allocated or its size is zero then PREV_ALLOC will be set.
     size_t NEXT_ALLOC = GET_ALLOC(HDRP(NEXT_BLK(bp)));
-    size_t PREV_ALLOC = GET_ALLOC(FTRP(PREV_BLK(bp)));
+    size_t PREV_ALLOC = GET_ALLOC(FTRP(PREV_BLK(bp))) || PREV_BLK(bp) == bp;
+    //PREV_BLK(bp) == bp: epilogue block을 만났을 떄. Extend했을 때 epilogue를 만나는 유일한 경우
     size_t size = GET_SIZE(HDRP(bp));
 
     /* Next block is only free */
@@ -132,8 +137,8 @@ static void *coalesce(void *bp)
     else if (!PREV_ALLOC && NEXT_ALLOC)
     {
         size += GET_SIZE(HDRP(PREV_BLK(bp)));
-        remove_from_free_list(PREV_BLK(bp));
         bp = PREV_BLK(bp);
+        remove_from_free_list(bp);
         PUT(HDRP(bp), PACK(size, 0));
         PUT(FTRP(bp), PACK(size, 0));
     }
@@ -181,17 +186,22 @@ void *mm_malloc(size_t size)
     return (bp);
 }
 
+/* 
+ * [김용욱]: 진짜 생각지도 못한 방법으로 최적화를 이뤄내셨군요.. 와.. 대단하십니다.. 
+ * 함수가 초기화 되면 변수가 다시 0으로 돌아간다고 생각했는데, 정적 변수를 사용하셔서
+ * 변수가 초기화 되지 않는군요! 정적 변수를 어떻게 사용하는지 배웠습니다! 감사합니다!
+ */
 static void *find_fit(size_t asize)
 {
     void *bp;
     static int last_malloced_size = 0;
     static int repeat_counter = 0;
-    // 동일 사이즈 반복 요청 횟수 1000회 초과시, 힙사이즈 자체 확장해주기(성능을 높이기 위한 방법)
+    // 계속 똑같은 사이즈만 요청했을 때 요청 횟수가 60회가 넘어가면 아예 힙사이즈 확늘린다.(성능을 높이기 위한 방법)
     if (last_malloced_size == (int)asize)
     {
-        if (repeat_counter > 1000)
+        if (repeat_counter > 60)
         {
-            int extendsize = MAX(asize, 6 * WSIZE);
+            int extendsize = MAX(asize, 4 * WSIZE);
             bp = extend_heap(extendsize / 4);
             return bp;
         }
@@ -200,7 +210,7 @@ static void *find_fit(size_t asize)
     }
     else
         repeat_counter = 0;
-    // first fit
+    // free block list에서 first fit으로 찾기
     for (bp = free_list_start; GET_ALLOC(HDRP(bp)) == 0; bp = GET_NEXT_PTR(bp))
     {
         if (asize <= (size_t)GET_SIZE(HDRP(bp)))
@@ -236,21 +246,28 @@ static void place(void *bp, size_t asize)
 
 static void insert_in_free_list(void *bp)
 {
-    SET_NEXT_PTR(bp, free_list_start); // bp의 뒷 노드 주소값으로 free_list_start 넣어주기
-    SET_PREV_PTR(free_list_start, bp); // free_list_start의 주소값으로 bp 넣어주기
+    SET_NEXT_PTR(bp, free_list_start);
+    SET_PREV_PTR(free_list_start, bp);
     SET_PREV_PTR(bp, NULL);
     free_list_start = bp;
 }
+
+/* 
+ * [김용욱]: 중복되는 코드를 허락하지 않는 모습이 너무 좋습니다! 크으 
+ * SET_NEXT_PTR, SET_PREV_PTR 매크로 정의 해두신게 
+ * GET_NEXT_PTR, GET_PREV_PTR만 사용해서 적는 것보다 가독성이 훨씬 올라가네요!
+ * 좋은 부분을 배운 것 같습니다!
+ */
 
 /*Removes the free block pointer int the free_list*/
 static void remove_from_free_list(void *bp)
 {
     //내 앞에 누구 있으면
     if (GET_PREV_PTR(bp))
-        SET_NEXT_PTR(GET_PREV_PTR(bp), GET_NEXT_PTR(bp)); // 내 앞 노드 주소에, 내 뒤 노드 주소를 넣기
+        SET_NEXT_PTR(GET_PREV_PTR(bp), GET_NEXT_PTR(bp)); //내 앞 노드의 주소에다가, 내 뒤 노드의 주소를 넣어준다.
     else                                                  // 내 앞에 아무도 없으면 == 내가 젤 앞 노드이면
-        free_list_start = GET_NEXT_PTR(bp);               // 나를 없애면서, 내 뒷 노드에다가 가장 앞자리 위치 주기
-    SET_PREV_PTR(GET_NEXT_PTR(bp), GET_PREV_PTR(bp));     // 내 뒤 노드의 주소에다가, 내 앞 주소를 넣어준다.
+        free_list_start = GET_NEXT_PTR(bp);               //나를 없애면서, 내 뒷 노드에다가 가장 앞자리의 왕관을 물려주고 간다!
+    SET_PREV_PTR(GET_NEXT_PTR(bp), GET_PREV_PTR(bp));
 }
 
 void mm_free(void *bp)
@@ -265,6 +282,12 @@ void mm_free(void *bp)
     coalesce(bp);
 }
 
+/* 
+ * [김용욱]: realloc 함수를 직접 구현하셨네요! 대단하십니다!
+ * 다만 if문이 깊게 들어가서 가독성 측면에서 조금 아쉬운 것 같습니다. 
+ * 300번째 줄부터는 if return, if return, return 구조로 조금 더 가독성을 높히실 수 있을 것 같습니다!
+ */
+
 void *mm_realloc(void *bp, size_t size)
 {
     if ((int)size < 0)
@@ -278,7 +301,7 @@ void *mm_realloc(void *bp, size_t size)
     {
         size_t oldsize = GET_SIZE(HDRP(bp));
         size_t newsize = size + (2 * WSIZE); // 2 words for header and footer
-        /*if newsize가 oldsize보다 작거나 같으면 just return bp */
+        /*if newsize가 oldsize보다 작거나 같으면 그냥 그대로 써도 됨. just return bp */
         if (newsize <= oldsize)
         {
             return bp;
@@ -289,7 +312,7 @@ void *mm_realloc(void *bp, size_t size)
             size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLK(bp)));
             size_t csize;
             /* next block is free and the size of the two blocks is greater than or equal the new size  */
-            /* next block이 가용상태이고 old, next block의 사이즈 합이 new size보다 크면 바로 합쳐서 쓰기  */
+            /* next block이 가용상태이고 old, next block의 사이즈 합이 new size보다 크면 그냥 그거 바로 합쳐서 쓰기  */
             if (!next_alloc && ((csize = oldsize + GET_SIZE(HDRP(NEXT_BLK(bp))))) >= newsize)
             {
                 remove_from_free_list(NEXT_BLK(bp));
@@ -310,4 +333,61 @@ void *mm_realloc(void *bp, size_t size)
     }
     else
         return NULL;
+}
+
+// heap consistency check하기
+static void checkblock(void *bp)
+{
+
+    if ((uintptr_t)bp % DSIZE)
+        printf("Error: %p is not doubleword aligned\n", bp);
+    if (GET(HDRP(bp)) != GET(FTRP(bp)))
+        printf("Error: header does not match footer\n");
+}
+
+void checkheap(bool verbose)
+{
+    void *bp;
+
+    if (verbose)
+        printf("Heap (%p):\n", heap_listp);
+
+    if (GET_SIZE(HDRP(heap_listp)) != DSIZE ||
+        !GET_ALLOC(HDRP(heap_listp)))
+        printf("Bad prologue header\n");
+    checkblock(heap_listp);
+
+    for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = (void *)NEXT_BLK(bp))
+    {
+        if (verbose)
+            printblock(bp);
+        checkblock(bp);
+    }
+
+    if (verbose)
+        printblock(bp);
+    if (GET_SIZE(HDRP(bp)) != 0 || !GET_ALLOC(HDRP(bp)))
+        printf("Bad epilogue header\n");
+}
+
+static void printblock(void *bp)
+{
+    bool halloc, falloc;
+    size_t hsize, fsize;
+
+    checkheap(false);
+    hsize = GET_SIZE(HDRP(bp));
+    halloc = GET_ALLOC(HDRP(bp));
+    fsize = GET_SIZE(FTRP(bp));
+    falloc = GET_ALLOC(FTRP(bp));
+
+    if (hsize == 0)
+    {
+        printf("%p: end of heap\n", bp);
+        return;
+    }
+
+    printf("%p: header: [%zu:%c] footer: [%zu:%c]\n", bp,
+           hsize, (halloc ? 'a' : 'f'),
+           fsize, (falloc ? 'a' : 'f'));
 }
